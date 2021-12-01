@@ -124,4 +124,146 @@
 
 ##### [e]BPF - the modern approach to viewing both stacks
 
-311p
+- BDF라는 기술을 이용한 방법
+
+- stackcount라는 BCC 도구를 이용
+
+  - 커널과 사용자 모드 스택을 동시에 제공
+
+- stackcount는 함수를 지정해야 하며 함수는 user space와 kernel space의 함수 모두 가능
+
+  - malloc을 포함하는 함수 조회
+
+  - `$ sudo stackcount-bpfcc -p 29819 -r ".*malloc.*" -v -d`
+
+    > [e]PDF 프로그램은 kernel lockdown 기능으로 인해 실패할 수 있음, 기본적으로는 비활성화
+
+  - `-d` 옵션은 구분 기호를 출력, 프로세스의 kernel mode stack과 user mode stack의 경계를 나타냄
+
+- Hello, world 프로그램 예제
+
+  - 코드는 `ch6/ebpf_stacktrace_eg/`
+
+  - ```
+    $ make
+    $ ./runit.sh
+    ```
+
+#### The 10,000-foot view of the process VAS
+
+![image-20211201101439417](images/image-20211201101439417.png)
+
+### Understanding and accessing the kernel task structure
+- 모든 단일 사용자 및 커널 공간 스레드는 Linux 커널 내에서 모든 속성을 포함하는 메타데이터 구조(task struct)로 표현
+- ![image-20211201102029317](images/image-20211201102029317.png)
+  - task structure는 시스템에 있는 모든 프로세스/스레드에 관한 정보를 보유
+  - 특정 속성은 fork시 자식 프로세스나 스레드에 상속
+
+#### Looking into the task structure
+
+- task structure는 프로세스 또는 스레드의 '루트' 데이터 구조
+  - 이 구조는 작업의 모든 속성을 보유
+- task structure는 `include/linux/sched.h`에 정의되어 있음
+
+#### Accessing the task structure with current
+
+- `countem.sh` 실행 결과 총 1,234개의 스레드가 존재했음
+
+  - 이는 커널 메모리에 총 1,234개의 task structure objects가 있음을 의미
+
+- 커널이 필요할 때 쉽게 task structure에 접근할 수 있어야함
+
+  - 따라서 커널 메모리의 모든 task structure objects는 task list라고 하는 circular doubly linked list에 연결됨
+
+- 프로세스 또는 스레드가 커널 코드를 실행할 때 커널 메모리에 존재하는 수천개 중 어떤 task struct가 자신에 속하는지 어떻게 찾는가?
+
+  - `current`라는 매크로 이용
+    - `current`를 사용하면 현재 커널 코드를 실행 중인 스레드의 task_struct에 대한 포인터가 생성됨, 특정 프로세서 코어에서 현재 실행 중인 프로세스 컨텍스트
+    - `current`는 객체 지향 언어에서 `this` 포인터를 호출하는 것과 유사
+
+  - `current`는 구현이 빠르도록 설계, O(1)
+
+  - `current`를 이용해 tsak structure를 역참조하고 정보를 추출
+
+    ```c
+    #include <linux/sched.h>
+    current->pid, current->comm
+    ```
+
+#### Determining the context
+
+- 커널 코드는 다음 두 컨텍스트 중 하나에서 실행
+
+  - Process (or task) context
+  - Interrupt (or atomic) context
+
+- 코드를 작성할 때 작업 중인 코드가 실행 중인 컨텍스트를 파악하는 방법
+
+  ```c
+  #include <linux/preempt.h>
+  in_task()
+  ```
+  - True면 프로세스 컨텍스트에서 실행 중
+  - False면 인터럽트 컨텍스트에서 실행 중
+
+### Working with the task structure via current
+
+- task structure의 몇 가지 멤버를 표시하고 init 및 cleanup 코드 경로가 실행되는 프로세스 컨텍스트를 표시하는 간단한 커널 모듈
+
+  - `ch6/current_affairs/current_affairs.c`
+
+  - `current`를 사용하여 접근하는 `show_ctx()` 함수를 사용
+
+  - 현재 포인터를 역참조하여 다양한 task_struct 멤버에 액세스하고 이를 표시함
+
+    ```c
+    if (likely(in_task())) {
+    	pr_info(
+    	"%s: in process context ::\n"
+    	" PID : %6d\n"
+    	" TGID : %6d\n"
+    	" UID : %6u\n"
+    	" EUID : %6u (%s root)\n"
+    	" name : %s\n"
+    	" current (ptr to our process context's task_struct) :\n"
+    	" 0x%pK (0x%px)\n"
+    	" stack start : 0x%pK (0x%px)\n",
+    	nm,
+    	/* always better to use the helper methods provided */
+    	task_pid_nr(current), task_tgid_nr(current),
+    	/* ... rather than the 'usual' direct lookups:
+    		current->pid, current->tgid, */
+    	uid, euid,
+    	(euid == 0?"have":"don't have"),
+    	current->comm,
+    	current, current,
+    	current->stack, current->stack);
+    }
+    ```
+
+#### Built-in kernel helper methods and optimizations
+- `task_pid_nr`
+- `from_kuid`
+- `in_task()`
+- `like()/unlikely()`
+
+#### Trying out the kernel module to print process context info
+
+- `current_affair.ko`를 빌드하고 커널에 적재
+
+  ```
+  $ sudo insmod ./current_affairs.ko ; dmesg
+  $ sudo rmmod current_affairs ; dmesg | tail
+  ```
+
+  - 코드를 실행하는 프로세스 컨텍스트의 프로세스 확인 가능
+
+##### Seeing that the Linux OS is monolithic
+
+- `insmod` 프로세스 자체가 프로세스 컨텍스트에서 실행했기 때문에 Linux 커널의 모놀리식 특성 입증
+
+- 하지만 Linux 커널은 모놀리식으로 간주되지 않음, Linux는 모듈화를 지원
+
+##### Coding for security with printk
+
+326p
