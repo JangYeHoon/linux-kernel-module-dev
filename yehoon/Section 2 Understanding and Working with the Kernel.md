@@ -266,4 +266,99 @@
 
 ##### Coding for security with printk
 
-326p
+- `ch6/current_affairs/current-affairs.c`에서 `%pK`라는 형식 지정자 사용
+  - 이는 보안을 위해 사용
+  - 커널 정보가 누출되지 않도록 함
+
+### Iterating over the kernel's task lists
+
+- list data structure는 circular doubly linked list를 사용
+  - 여기서 작동하는 핵심 커널 코드는 `List.h`
+- `include/linux/sched/signal.h` 파일에서 제공된 매크로를 통해 다양한 list를 쉽게 반복 가능
+
+- 다음 섹션에서는 두 가지 방법을 이용해 kernel task list를 반복
+  - kernel task list를 반복하고 모든 프로세스를 표시
+  - kernel task list를 반복하고 모든 쓰레드를 표시
+
+#### Iterating over the task list I – displaying all processes
+
+- `for_each_process()` 매크로를 이용해 쉽게 모든 프로세스 반복 가능
+
+- ```c
+  // include/linux/sched/signal.h:
+  #define for_each_process(p) \
+  	for (p = &init_task ; (p = next_task(p)) != &init_task ; )
+  ```
+
+  - `init_task`는 시작 포인터
+  - 첫 번째 user space process의 task structure를 가리킴
+
+- `ch06/foreach/prcs_showall`에서 sample kernel module 시도
+  - `cd ch6/foreach/prcs_showall; ../../../lkm prcs_showall`
+
+#### Iterating over the task list II – displaying all threads
+
+- `do_each_thread() { ... }`와 `while_each_thread()`를 이용해 스레드를 반복
+  - `ch6/foreach/thrd_showall/`
+
+##### Differentiating between the process and thread – the TGID and the PID
+
+- 모든 스레드는 고유한 task_struct를 가지며 고유한 pid를 가짐
+- 동일한 프로세스의 여러 스레드를 구분하기 위한 pid
+  - tgid를 이용
+  - 단일 스레드인 경우 tgid와 pid 값이 동일
+  - 멀티 프로세스 인 경우 주 스레드의 tgid와 pid 값은 같고 다른 스레드는 주 스레드의 tgid 값을 상속받짐나 고유한 pdi 값을 유지
+- pid와 tgid 확인
+  - `ps -LA`
+
+#### Iterating over the task list III – the code
+
+- `ch6/foreach/thrd_showall/thrd_showall.c` 코드
+
+  - `LINUX_VERSION_CODE`를 통해 버전에 따라 헤더 포함
+
+  - `tasklist_lock()`와 `task_[un]lock()` API를 이용해 locking work 무시
+
+  - 모든 CPU 코어에는 다른 스레드가 원할 때 실행되는 전용 유휴 스레드가 있음, 이는 다른 스레드가 시작하지 안흘 때 실행됨
+
+  - 모든 스레드를 반복
+
+    ```c
+    do_each_thread(g, t) {
+    	task_lock(t);
+    	task_unlock(t);
+    } while_each_thread(g, t);
+    ```
+
+  - 스레드의 이름을 검색하고 커널 스레드가 있으면 대괄호 안에 출력
+
+    ```c
+    if (!g->mm) { // kernel thread
+    /* One might question why we don't use the get_task_comm() to
+    * obtain the task's name here; the short reason: it causes a
+    * deadlock! We shall explore this (and how to avoid it) in
+    * some detail in the chapters on Synchronization. For now, we
+    * just do it the simple way ...
+    */
+    	snprintf(tmp, TMPMAX-1, " [%16s]", t->comm);
+    } else {
+    	snprintf(tmp, TMPMAX-1, " %16s ", t->comm);
+    }
+    strncat(buf, tmp, TMPMAX);
+    /* Is this the "main" thread of a multithreaded process?
+    * We check by seeing if (a) it's a user space thread,
+    * (b) its TGID == its PID, and (c), there are >1 threads in
+    * the process.
+    * If so, display the number of threads in the overall process
+    * to the right..
+    */
+    nr_thrds = get_nr_threads(g);
+    if (g->mm && (g->tgid == t->pid) && (nr_thrds > 1)) {
+    	snprintf(tmp, TMPMAX-1, " %3d", nr_thrds);
+    	strncat(buf, tmp, TMPMAX);
+    }
+    ```
+
+    - kernel thread에는 user space 매핑이 없기 떄문에 current->mm은 mm_strut의 포인터이며 전체 프로세스의 user space 매핑을 나타냄, null인 경우 user space에 매핑이 안되기 때문에 kernel thread라는 것이기 때문에 출력
+    - deadlock이 발생하기 때문에 `get_task_comm()`을 사용하지 않음
+    - `get_nr_threads()` 매크로를 이용해 주어진 프로세스의 스레드 수를 갖옴
