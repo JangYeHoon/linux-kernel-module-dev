@@ -1,6 +1,7 @@
 # Section 2: Understanding and Working with the Kernel
 
 - [Kernel Internals Essentials - Processes and Threads](#kernel-internals-essentials---processes-and-threads)
+- [Memory Management Internals - Essentials](#memory-management-internals---essentials)
 
 ## Kernel Internals Essentials - Processes and Threads
 
@@ -362,3 +363,100 @@
     - kernel thread에는 user space 매핑이 없기 떄문에 current->mm은 mm_strut의 포인터이며 전체 프로세스의 user space 매핑을 나타냄, null인 경우 user space에 매핑이 안되기 때문에 kernel thread라는 것이기 때문에 출력
     - deadlock이 발생하기 때문에 `get_task_comm()`을 사용하지 않음
     - `get_nr_threads()` 매크로를 이용해 주어진 프로세스의 스레드 수를 갖옴
+
+---
+
+
+
+## Memory Management Internals - Essentials
+
+### Understanding the VM split
+
+- Linux 커널이 메모리를 관리하는 방법
+  - virtual memory-based approach(the usual case)
+  - kernel actually organizes physical memory(RAM pages)
+
+- VAS 프로세스
+
+  - completely self-contained, a sandbox
+
+  - VAS의 범위는 가상 주소 0에서 상위 주소까지
+
+    - 그럼 상위 주소의 실제 값은?
+
+    - 주소 지정에 사용되는 비트 수에 따라 다름
+
+      32bit : 4GB, 64bit : 16EB
+
+#### Looking under the hood – the Hello, world C program
+
+- Hello World Example
+
+  ```sh
+  $ gcc helloworld.c -o helloworld
+  $ ./helloworld
+  Hello, world
+  $ ldd ./helloworld
+  	linux-vdso.so.1 (0x00007fffcfce3000)
+  	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007feb7b85b000)
+  	/lib64/ld-linux-x86-64.so.2 (0x00007feb7be4e000)
+  ```
+
+  - 모든 단일 리눅스 프로세스는 자동으로 최소 두 오브젝트인 glibc 공유 라이브러리와 프로그램 로더를 연결
+  - `ldd` 출력 오른쪽 괄호 값 - virtual address of the location of the mapping
+
+##### Going beyond the printf() API
+
+- `printf` API는 `write` 시스템 호출로 변환되며 문자열을 stdout에 출력
+  - `write`는 커널 호출이기 때문에 커널 모드로 전환하고 커널 코드를 실행
+  - `write`는 커널 VAS에 있는데 커널 VAS가 sandbox 밖에 있으면 어떻게 부르는가?
+    - VAS 프로세스 공간을 분할해서 사용 -> **`VM split`**
+- Fig 7.1 그림 추가
+  - page offset은 cpu에 따라 기본 설정이 다름다름
+
+### VM split on 64-bit Linux systems
+
+- 64비트 시스템에서 64비트가 모두 주소 지정에 사용되지 않음
+
+#### Virtual addressing and address translation
+
+- Example Code
+
+  ```c
+  int i = 5;
+  printf("address of i is 0x%x\n", &i);
+  ```
+
+  - 두 가지 종류의 가상 주소
+    - 사용자 공간 프로세스에서 실행 시 `i`는 UVA(User virtual address)
+    - 커널 또는 커널 모듈에서 실행하면 `i`는 KVA(Kernel virtual address)
+  - 가상 주소는 절대 값이 아닌 비트마스크
+    - 32비트 리눅스에서 32비트는 PGD(Page Global Directory), PT(Page Table), Offset으로 나뉨
+    - 이 값들은 커널 페이지 테이블에 대한 접근과 MMU가 주소 변환을 수행하는 인덱스
+    - 64비트 시스템에서는 48bit addressing을 사용해도 virtual address bitmask에 더 많은 필드가 있음
+
+- 64bit virtual address
+
+  - Fig 7.2
+
+  - 48bit addressing에서는 bits 0 to 47을 사용하고 나머지 16비트는 MSB(Most Significant Bit)로 사용
+
+    - Kernel VAS : MSB 16bit are always set to 1.
+
+      `0xffff .... .... .....`
+
+    - User VAS : MSB 16bit are always set to 0.
+
+      `0x0000 .... .... ....`
+
+  - OS는 각 프로세스의 페이징 테이블 생성 및 조작
+
+  - 툴체인(컴파일러)은 가상 주소 생성
+
+  - 런타임 주소 변환을 수행하여 주어진 가상 주소를 물리적(RAM) 주소로 변환하는 것은 프로세서 **MMU**
+
+- 64bit VAS는 다음으로 분할(페이지 크기가 4KB인 48bit addressing)
+
+  - 표준 하단, 128TB용: 사용자 VAS 및 가상 주소 범위는 0x0 ~ 0x0000 7fff ffff fff
+  - 표준 상반부, 128TB용: 커널 VAS 및 가상 주소 범위는 0xffff 8000 0000 0000에서 0xffff ffff ffff ffff입니다.
+  - 349p
