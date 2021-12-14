@@ -459,4 +459,20 @@
 
   - 표준 하단, 128TB용: 사용자 VAS 및 가상 주소 범위는 0x0 ~ 0x0000 7fff ffff fff
   - 표준 상반부, 128TB용: 커널 VAS 및 가상 주소 범위는 0xffff 8000 0000 0000에서 0xffff ffff ffff ffff입니다.
-  - 349p
+  - ![image-20211214123739065](images/image-20211214123739065.png)
+
+#### The process VAS – the full view
+
+- 시스템에 있는 모든 프로세스는 고유한 사용자 모드 VAS를 갖지만 동일한 커널 세그먼트를 공유
+- ![image-20211214124233090](images/image-20211214124233090.png)
+
+### Examining the process VAS
+
+- procfs 시스템의 기본 작업
+  - 커널 및 하드웨어 내부 세부 정보를 자세하게 나타내기 위해 파일 및 디렉토리의 통합 집합을 제공
+  - sysad가 주요 커널 매개변수를 수정할 수 있도록 함
+
+### Examining the user VAS in detail
+
+- 355p
+
