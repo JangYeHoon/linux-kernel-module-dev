@@ -474,5 +474,45 @@
 
 ### Examining the user VAS in detail
 
-- 355p
+- 프로세스의 사용자 공간 메모리 맵을 보는 방법
+  - Directly via the procfs interface's `/proc/PID/maps` pseudo-file
+  - Using a few useful frontends
 
+
+#### Directly viewing the process memory map using procfs
+
+- `self` 키워드를 이용해 프로세스의 VAS 조회
+  - `cat /proc/self/maps`
+- `inode` 확인 방법
+  - `ls -i /bin/cat`	
+
+#### Frontends to view the process memory map
+
+- `pmap`과 `smem`을 활용
+
+- `/proc/PID/smaps`를 통해 자세한 정보를 제공
+
+  - `/proc/self/smaps`를 이용
+
+- `procmap`을 이용해 출력
+
+  ```sh
+  $ git clone https://github.com/kaiwan/procmap
+  $ cd procmap
+  $ ./procmap
+  ```
+
+- memory map 출력
+
+  - `procmap --pid=$(pgrep FAHViewer)`
+
+### Understanding VMA basics
+
+- 커널은 VMA 데이터 구조를 사용하여 세그먼트 또는 매핑을 추상화
+  - VAS의 모든 단일 세그먼트에 대해 OS에서 유지 관리하는 VMA 개체가 존재
+
+- VMA 메타데이터 구조는 커널이 다양한 종류의 메모리 관리를 수행하는데 필요한 모든 정보를 포함
+
+### Examining the kernel segment
+
+- 368p
