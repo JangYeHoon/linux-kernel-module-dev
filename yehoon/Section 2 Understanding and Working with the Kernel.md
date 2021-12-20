@@ -2,6 +2,7 @@
 
 - [Kernel Internals Essentials - Processes and Threads](#kernel-internals-essentials---processes-and-threads)
 - [Memory Management Internals - Essentials](#memory-management-internals---essentials)
+- [Kernel Memory Allocation for Module Authors - Part 1](#kernel-memory-allocation-for-module-authors---part-1)
 
 ## Kernel Internals Essentials - Processes and Threads
 
@@ -515,4 +516,376 @@
 
 ### Examining the kernel segment
 
-- 368p
+- ![image-20211215101505240](images/image-20211215101505240.png)
+  - **The user mode VAS**
+  - **Kernel VAS or the kernel segment**
+  - **The lowmeme region** : RAM이 커널에 직접 매핑되는 곳, RAM이 매핑되는 커널 세그먼트의 기본 위치는 PAGE_OFFSET에 의해 지정됨
+  - **The kernel vmalloc region** : 가상의 커널 VAS 영역
+  - **The kernel modules space** : 커널 VAS의 영역은 LKM(Loadable Kernel Modules)의 정적 텍스트 및 데이터가 차지하는 메모리를 위해 따로 설정, `insmod`를 하면 `init_module`의 기본 커널 코드가 이 영역에 메모리를 할당하고 커널 모듈의 코드와 데이터를 로드
+
+#### Writing a kernel module to show information about the kernel segment
+
+- 커널 세그먼트에서 모든 아키텍처에서 공통적인 부분
+  - lowmem 영역(압축되지 않은 커널 이미지 -코드, 데이터, BSS), 커널 모듈 영역, vmalloc/ioremap 영역
+
+##### Viewing the kernel segment on a Raspberry Pi via dmesg
+
+- 부팅시 커널 세그먼트에 대한 위치와 크기를 출력
+- 372p
+
+##### Macros and variables describing the kernel segment layout
+- 커널 세그먼트 정보를 출력하는 커널 모듈 개발을 위한 커널 세그먼트의 메모리를 나타내는 주요 매크로
+
+  - **The vector table**
+
+    - | Macro or variable | Interpretation                                               |
+      | ----------------- | ------------------------------------------------------------ |
+      | `VECTORS_BASE`    | Typically ARM-32 only; start KVA of a kernel vector table spanning 1 page |
+
+  - **The fix map region**
+
+    - | Macro or variable | Interpretation                                               |
+      | ----------------- | ------------------------------------------------------------ |
+      | `FIXADDR_START`   | Start KVA of the kernel fixmap region spanning FIXADDR_SIZE bytes |
+
+  - **Kernel modules are allocated memory**
+
+    - | Kernel modules(LKMs) region | Memory allocated from here for static code + data of LKMs    |
+      | --------------------------- | ------------------------------------------------------------ |
+      | `MODULES_VADDR`             | Start KVA of the kernel modules region                       |
+      | `MODULES_END`               | End KVA of kernel modules region; size is `MODULES_END - MODULES_VADDR` |
+
+  - **KASAN(Kernel Address SANitizer)**
+
+    - | KASAN shadow memory region(only 64-bit) | [Optional] (only on 64-bit and only if CONFIG_KASAN is defined; see more as follows) |
+      | --------------------------------------- | ------------------------------------------------------------ |
+      | `KASAN_SHADOW_START`                    | Start KVA of the KASAN region                                |
+      | `KASAN_SHADOW_END`                      | End KVA of the KASAN region; size is `KASAN_SHADOW_END - KASAN_SHADOW_START` |
+
+  - **The vmalloc region**
+
+    - | The vmalloc region | For memory allocated via vmalloc() and friends               |
+      | ------------------ | ------------------------------------------------------------ |
+      | `VMALLOC_START`    | Start KVA of the `vmalloc` region                            |
+      | `VMALLOC_END`      | End KVA of the `vmalloc` region; size is `VMALLOC_END - VMALLOC_START` |
+
+  - **The lowmem region**
+
+    - | Lowmem region | Direct-mapped memory region                                  |
+      | ------------- | ------------------------------------------------------------ |
+      | `PAGE_OFFSET` | Start KVA of the lowmem region; also represents the start of the kernel segment on some architectures and is (often) the VM split value on 32-bit. |
+      | `high_memory` | End KVA of the lowmem region, upper bound of direct-mapped memory; in effect, this value minus `PAGE_OFFSET` is the amount of (platform) RAM on the system (careful, this is not necessarily the case on all arches though); not to be confused with `ZONE_HIGHMEM`. |
+
+  - **The highmem region**
+
+    - | Highmem region(only possible on 32-bit) | [Optional] HIGHMEM may be present on some 32-bit systems     |
+      | --------------------------------------- | ------------------------------------------------------------ |
+      | `PKMAP_BASE`                            | Start KVA of the highmem region, runs until LAST_PKMAP pages; represents the kernel mapping of so-called high-memory pages (older, only possible on 32-bit) |
+
+  - **The (uncompressed) kernel image itself**
+
+    - | Kernel(static) image       | The content of the uncompressed kernel image (see the following); not exported and thus unavailable to modules |
+      | -------------------------- | ------------------------------------------------------------ |
+      | `_text, _etext`            | Start and end KVAs(respectively) of the kernel text (code) region |
+      | `__init_begin, __init_end` | Start and end KVAs(respectively) of the kernel `init` section region |
+      | `_sdate, _edata`           | Start and end KVAs(respectively) of the kernel static data region |
+      | `__bss_start, __bss_stop`  | Start and end KVAs(respectively) of the kernel BSS (uninitialized data) region |
+
+  - **The user VAS**
+
+    - | User VAS                            | User Virtual Address Space(VAS)                              |
+      | ----------------------------------- | ------------------------------------------------------------ |
+      | (User-mode VAS follows) `TASK_SIZE` | (Examined in detail earlier via `procfs` or our `procmap` utility script); the kernel macro `TASK_SIZE` represents the size of the user VAS (bytes). |
+
+  - `init` method
+
+    - `show_kernelseg_info()`
+    - `show_userspace_info()`
+
+#### Trying it out – viewing kernel segment details
+
+- `ch7/show_kernel_seg/kernel_seg.c`
+  - `SHOW_DELTA_*()` 매크로는 `convenient.h`에 정의되어 있으며 전달된 낮은 값과 높은 값을 쉽게 표시하고 두 값의 차이를 계산해줌
+  - 출력되는 값들
+    - Kernel module region
+    - (Optional) KASAN region
+    - The vmalloc region
+    - The lowmem, and a possible highmem, region
+  - 라즈베리 파이에서 출력
+    - 380p
+  - ![image-20211215105651683](images/image-20211215105651683.png)
+
+#### The kernel VAS via procmap
+
+- 라즈베리 파이에서 `procmap`을 이용해 출력
+  - `./procmap --pid=1 --verbose`
+- 382p
+
+#### Trying it out – the user segment
+
+- 387p
+- `ch7/show_kernel_seg`
+
+### Randomizing the memory layout – KASLR
+
+- 보안을 위해 커널 공간과 사용자 공간의 주소를 알기 어렵게 하기 위해 ASLR과 KASLR 기술을 사용
+  - randomization을 사용
+  - 사용자 공간 매핑, 공유 라이브러리의 시작 주소, malloc 함수에 대해 무작위로 지정
+
+#### User-mode ASLR
+
+- `/proc/sys/kernel/randomize_va_space`에서 설정
+  - 0 : ASLR turned OFF
+  - 1 : ASLR is ON : mmap based allocations, stack, vDSO page is randomized
+  - 2 : ASLR is ON : all of the preceding plus the heap location is randomized
+
+#### KASLR
+
+- ASLR과 유사하며 3.14 커널부터 커널 VAS도 KASL을 활성화하여 randomized
+- Explicitly turned off by passing the `nokaslr` parameter
+- Explicitly turned on by passing the `kaslr` parameter
+
+##### Querying/setting KASLR status with a script
+- `<book-sourec>/ch7/ASLR_check.sh`
+  - (user-mode) ASLR과 KASLR에 대한 상태 정보 출력 
+- ASLR 기능을 확인하기 위한 테스트 루틴
+  - 다음 명령어를 두 번 실행하여 확인
+  - `grep -E "heap|stack" /proc/self/maps`
+- 파라미터로 0을 전달해 ASLR을 종료
+  - `sudo ./ASLR_check.sh 0`
+
+### Physical memory
+
+#### Physical RAM organization
+
+- 커널은 부팅 시 physical RAM을 node, zones, and page frames(page frames are physical pages of RAM)을 트리와 같은 계층 구조로 구성하고 분할
+  - Nodes are divided into zones, and zones consist of page frames.
+
+##### Nodes
+
+- 노드는 시스템 마더보드 및 관련 컨트롤러 칩셋의 physical RAM 모듈을 나타내는데 사용되는 데이터 구조
+  - **NUMA(Non-Uniform Memory Access) system** : kernel allocation request가 발생하는 코어에서 중요한 경우 메모리를 균일하지 않게 처리하여 성능 향상
+    - NUMA 시스템은 하드웨어가 멀티코어 이상이고 CPU와 연결된 RAM의 physical "banks"가 둘 이상인 시스템
+  - **UMA(Uniform Memory Access) system** : kernel allocation request가 발생하는 코어가 중요하지 않은 경우(메모리가 균일하게 처리)
+    - 하나의 노드
+
+![image-20211215113403231](images/image-20211215113403231.png)
+
+##### Zones
+
+![image-20211215113749154](images/image-20211215113749154.png)
+
+- Zone에는 여러 page frame이 할당
+
+#### Direct-mapped RAM and address translation
+- 부팅시 리눅스 커널은 모든 system RAM을 kernel segment에 직접 "maps"
+  - Physical page frame 0 maps to kernel virtual page 0.
+  - Physical page frame 1 maps to kernel virtual page 1.
+  - Physical page frame 2 maps to kernel virtual page 2, and so on.
+  - 이를 1:1 or direct mapping, identity-mapped RAM, or linear addresses 라고 부름
+- ![image-20211215114327319](images/image-20211215114327319.png)
+
+- KVA가 주어졌을 때 해당하는 Physical Address(PA) 계산
+  - `pa = kva - PAGE_OFFSET`
+- PA가 주어졌을 때 KVA를 계산
+  - `kva = pa + PAGE_OFFSET`
+- 주소 변환 API
+  - `phys_addr_t virt_to_phys(volatile void *address)`
+  - `void *phys_to_virt(phys_addr_t address)`
+
+
+
+## Kernel Memory Allocation for Module Authors - Part 1
+### Introducing kernel memory allocators
+![image-20211220180113310](images/image-20211220180113310.png)
+
+- 전체 Linux kernel과 모든 핵심 구성 요소 및 하위 시스템은 메모리 할당을 위해 Page Allocator를 사용
+- Page Allocator가 메모리를 가져오는 Page Frame(RAM)은 커널 lowmem region or direct-mapped RAM region
+- slab allocator는 page allocator의 사용자이므로 page allocator에서 메모리를 가져옴
+- `malloc`을 사용해도 user space dynamic memory allocation은 page 또는 slab allocator를 호출하지 않음
+- Linux 커널 메모리는 교체 할 수 없음, user space memory page는 스왑 가능
+
+### Understanding and using the kernel page allocator (or BSA)
+#### The fundamental workings of the page allocator
+##### Freelist organization
+
+- page allocator(buddy system) 알고리즘의 핵심은 primary internal metadata structure
+  - 이것은 buddy system freelist라고 하며 array of pointers to doubly linked circular lists로 구성
+- ![image-20211220181228566](images/image-20211220181228566.png)
+
+##### The workings of the page allocator
+
+- page allocator algorithm 수행 과정(장치 드라이버가 128KB의 메모리 요청)
+  1. 알고리즘은 페이지에 할당해야 되는 크기를 찾음(페이지 크기가 4KB라고 가정), 128/4 = 32 page
+  2. 32에 대한 2의 거듭 제곱 값을 결정(32 = 2의 5승)
+  3. node:zone page allocator freelist에서 5에 있는 list를 확인, memory chunk를 사용할 수 있는 경우 대기열에서 빼서 list에 업데이트하고 할당을 요청
+  4. 만약 order 5 lsit에서 사용할 수 있는 memory chunk가 없는 경우 다음 order인 6을 확인하여 할당 요청
+  5. order 6 list가 null이 아닌 경우 memory chunk(크기가 256KB, 필요한 것의 두 배)를 가져오고 다음을 수행
+     - chunk가 제거되었다는 사실을 반영하도록 list를 업데이트
+     - chunk를 반으로 잘라 2개의 128KB 반쪽을 얻음
+     - 절반을 oder 5 list로 migrate 
+     - 나머지 절반을 요청자에게 할당
+     - done
+  6. order 6 list도 비어 있으면 성공할 때 까지 order 7 list확인하고 프로세스 반복
+  7. 모든 list가 비어 있으면 요청 실패
+
+##### Working through a few scenarios
+
+*The simplest case*
+
+- 128KB 요청하면 order 5 list가 null이 아니면 할당
+
+*A more complex case*
+
+- order 5 list가 null이면 order 6 list 할당
+
+*The down fall case*
+
+- 132KB를 요청하면 order 6 list(256KB)에 할당, 124KB 낭비,  internal fragmentation
+
+##### Page allocator internals – a few more details
+
+- `free_area` struct에서 배열을 사용한 것에 대한 이점
+  - Helps defragment memory (external fragmentation is prevented)
+  - Guarantees the allocation of a physically contiguous memory chunk
+  - Guarantees CPU cache line-aligned memory blocks
+  - Fast (well, fast enough; the algorithmic time complexity is O(log n))
+
+### Learning how to use the page allocator APIs
+- 메모리 할당 API or macro
+- 425p
+
+#### Dealing with the GFP flags
+
+- `gfp-t gfp_mask`
+  - GFP 플래그, 커널의 내부 메모리 관리 코드 계층에서 사용하는 플래그
+  - 커널 모듈에서 중요한 GFP 플래그
+    - `GFP_KERNEL`
+      - process context에서 절전 모드로 전환하는 것이 안전한 경우 사용
+    - `GFP_ATOMIC`
+      - 절전 모드가 안전하지 않은 경우 사용
+    - `__GFP_ZERO`
+      - zeroed-out memory pages를 원한다고 커널에 암시
+
+#### Freeing pages with the page allocator
+
+- 메모리 해제 API or macro
+- 429p
+
+#### Writing a kernel module to demo using the page allocator APIs
+- `ch8/lowlevel_mem/lowlevel_mem.c`
+- 물리적 주소를 검색해 페이지 프레임 번호 검색 예제
+  - `<booksrc>/klib_llkd.c`
+    - `void show_phy_pages()`
+
+#### The page allocator and internal fragmentation
+
+- ```c
+  #include <linux/gfp.h>
+  void *alloc_pages_exact(size_t size, gfp_t gfp_mask);
+  void free_pages_exact(void *virt, size_t size);
+  ```
+
+### Understanding and using the kernel slab allocator
+#### The object aching idea
+
+- 자주 할당되고 해제되는 오브젝트를 캐시에서 미리 할당
+  - slab cache
+
+#### Learning how to use the slab allocator APIs
+
+##### Allocating slab memory
+
+```
+#include <linux/slab.h>
+void *kmalloc(size_t size, gfp_t flags);
+void *kzalloc(size_t size, gfp_t flags);
+```
+
+- `kmalloc()`에 의해 할당된 메모리 청크의 내용은 무작위
+- `kzalloc()`이 선호되고 권자오디는 API인 이유는 할당된 메모리를 0으로 설정하기 때문
+
+##### Freeing slab memory
+
+- `void kfree(const void *)`
+
+##### Writing a kernel module to use the basic slab APIs
+
+- `ch8/slab1`
+
+#### Size limitations of the kmalloc API
+
+- `k[m|z]alloc()` API에 대한 메모리 제한은 얼마인가
+- 기술적 제한
+  - the system page size(determined by the `PAGE_SIZE` macro)
+  - the number of "orders"(determined by the `MAX_ORDER` macro)
+
+#### Testing the limits – memory allocation with a single call
+
+- 반복문을 통해 slab cache에 계속해서 메모리를 할당하는 예제
+  - 그떄 할당되는 메모리를 계속 늘려 limit까지 할당
+- `ch8/slab3_maxsize/slab3_maxsize.c`
+  - `test_maxallocsz(void)`
+
+### Slab allocator – a few additional details
+#### Using the kernel's resource-managed memory allocation APIs
+
+- device drivers에서 메모리 할당을 위한 API
+  - `void * devm_kmalloc(struct device *dev, size_t size, gfp_t gfp);`
+  - `void * devm_kzalloc(struct device *dev, size_t size, gfp_t gfp);`
+
+- 해당 resource managed API가 유용한 이유는 개발자가 할당된 메모리를 명시적으로 해제할 필요가 없음
+  - 드라이버 분리나 모듈이 제거되면 자동으로 해제
+
+### Caveats when using the slab allocator
+
+#### Background details and conclusions
+
+- The page allocator allocates power-of-2 pages to the caller.
+- slab allocator는 적은 양의 메모리에 대한 요청을 효율적으로 이행하기 위해 소형 일반 메모리 캐시와 함께 object caches로 설계
+- The page allocator guarantees physically contiguous page and cacheline-aligned memory
+- The slab allocator guarantees physically contiguous and cacheline-aligned memory.
+
+- `size_t ksize(const void *)`
+  - 매개변수는 기존 slab cache에 대한 포인터
+  - The return value is the actual number of bytes allocated.
+
+#### Testing slab allocation with ksize() – case 1
+
+```c
+struct mysmallctx {
+	int tx, rx;
+	char passwd[8], config[4];
+} *ctx;
+
+pr_info("sizeof struct mysmallctx = %zd bytes\n", sizeof(struct
+mysmallctx));
+ctx = kzalloc(sizeof(struct mysmallctx), GFP_KERNEL);
+pr_info("(context structure allocated and initialized to zero)\n"
+	"*actual* size allocated = %zu bytes\n", ksize(ctx));
+```
+
+```sh
+$ dmesg
+[...]
+sizeof struct mysmallctx = 20 bytes
+(context structure allocated and initialized to zero)
+*actual* size allocated = 32 bytes
+```
+
+- `kzalloc()`을 통해 20byte만 할당하려 하지만 32byte를 할당하여 낭비
+
+#### Testing slab allocation with ksize() – case 2
+
+- `ch8/slab4_actualsize`
+  - 루프를 돌며 할당할 때 `ksize()`를 통해 실제 할당된 메모리 출력
+
+#### Slab layer implementations within the kernel
+
+- `CONFIG_SLAB`
+  - 최적화되지 않은 초기 버전
+- `CONFIG_SLUB`
+  - 메모리 효율성, 성능 등을 `CONFIG_SLAB`보다 크게 개선
+
+- `CONFIG_SLOB`
+  - 단순화시켰으며 대형 시스템에서는 잘 동작하지 않음
