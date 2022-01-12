@@ -675,6 +675,7 @@
 
 ![image-20211215113749154](images/image-20211215113749154.png)
 
+- DMA, DMA32는 ISA 버스기반 디바이스의 경우에서 정상적인 동작을 위해 필요
 - Zone에는 여러 page frame이 할당
 
 #### Direct-mapped RAM and address translation
@@ -803,7 +804,7 @@ void *kzalloc(size_t size, gfp_t flags);
 ```
 
 - `kmalloc()`에 의해 할당된 메모리 청크의 내용은 무작위
-- `kzalloc()`이 선호되고 권자오디는 API인 이유는 할당된 메모리를 0으로 설정하기 때문
+- `kzalloc()`이 선호되고 권장되는 API인 이유는 할당된 메모리를 0으로 설정하기 때문
 
 ##### Freeing slab memory
 
