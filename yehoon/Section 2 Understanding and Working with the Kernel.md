@@ -790,7 +790,7 @@
 ### Understanding and using the kernel slab allocator
 #### The object aching idea
 
-- 자주 할당되고 해제되는 오브젝트를 캐시에서 미리 할당
+- 자주 할당되고 해제되는 오브젝트를 캐시에 미리 할당
   - slab cache
 
 #### Learning how to use the slab allocator APIs
@@ -804,7 +804,7 @@ void *kzalloc(size_t size, gfp_t flags);
 ```
 
 - `kmalloc()`에 의해 할당된 메모리 청크의 내용은 무작위
-- `kzalloc()`이 선호되고 권장되는 API인 이유는 할당된 메모리를 0으로 설정하기 때문
+- `kzalloc()`이 선호되고 권장되는 API인 이유는 할당된 메모리를 0으로 초기화 때문
 
 ##### Freeing slab memory
 
