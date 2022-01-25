@@ -899,4 +899,97 @@ sizeof struct mysmallctx = 20 bytes
 ### Creating a custom slab cache
 
 - slab layer API를 통해 own custom slab caches 생성 가능
-- 
+
+#### Creating and using a custom slab cache within a kernel module
+
+- custom slab cache 생성, 사용, 삭제 과정
+  - `kmem_cache_create()` API를 사용하여 지정된 크기의 사용자 지정 슬랩 캐시 생성
+  - Using the slab cache.
+    - `kmem_cache_alloc()` API를 실행하여 슬랩 캐시 내 사용자 지정 개체의 단일 인스턴스를 할당
+    - Use the object
+    - `kmem_cache_free()` API를 사용하여 캐시로 다시 해제
+  - `kmem_cache_destroy()`로 custom slab cache 삭제
+
+##### Creating a custom slab cache
+
+- 캐시 내 각 개체의 실제 크기를 요청된 것보다 크게 잡는 이유
+  - 요청된 메모리보다 더 많이 제공할 수 있지만 더 적게는 제공 불가능
+  - 메타데이터(housekeeping information)를 위한 공간 필요
+  - 커널은 필요한 정확한 크기의 캐시를 제공할 수 없음
+- 플래그 종류
+  - SLAB_POISON - 캐시 메모리를 이전에 알려진 값(0xa5a5a5a5)로 초기화
+  - SLAB_RED_ZONE - 버퍼 오버플로 오류를 확인하는 일반적인 방법
+  - SLAB_HWCACHE_ALIGN - 일반적으로 사용되며 성능을 위해 권장되는 플래그, k[m|z]alloc() API를 통해 할당된 메모리가 하드웨어 캐시 라인에 정렬되는 방식
+
+##### Using the new slab cache's memory
+
+- custom slab cache 사용
+  - `void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags);`
+- custom slab cache free
+  - `void kmem_cache_free(struct kmem_cache *, void *);`
+
+##### Destroying the custom cache
+
+- custom slab cache destroy
+  - `void kmem_cache_destroy(struct kmem_cache *);`
+
+### Custom slab - a demo kernel module
+
+- 관련 코드
+  - `ch9/slab_custom/slab_custom.c`
+
+### Understanding slab shrinkers
+
+- 많은 메모리가 사용중이고 적은 여유 공간을 가지면
+  - housekeeping에서 메모리를 회수
+- custom slab cache코드에 shrinker interface를 등록
+  - 메모리 사용량이 높아지면 커널은 여러 slab shrinker를 호출하여 slab object를 해제
+
+- shrinker function을 등록하는 API - `register_shrinker()`
+  - 두 개의 콜백 루틴이 포함
+    - `count_objects()` : 해제될 객체의 수를 계산하고 반환, 0이 반환되면 해제 가능한 메모리 개체 없음
+    - `scan_objects()` : `count_objects()`가 0이 아닌 값을 반환하는 경우에만 호출
+
+#### The slab allocator - pros and cons - a summation
+
+- slab allocator API 장점
+  - fast
+  - A physically contiguous memory chunk is guaranteed
+  - SLAB_HWCACHE_ALIGN flag를 사용하면 하드웨어 cacheline-aligned memory 보장
+  - 특정 개체에 대한 custom slab cache를 만들 수 있음
+- 단점
+  - 제한된 크기만 할당 가능
+  - k[m|z]alloc() API를 잘못 사용하여 너무 많은 메모리를 요청하거나 임계값을 초과하는 메모리 크기를 요청해 internal fragmentation 발생 가능
+
+### Debugging at the slab layer
+
+- KASAN (the Kernel Address Sanitizer; available for x86_64 and AArch64, 4.x kernels onward)
+- SLUB debug techniques (covered here)
+- kmemleak (though KASAN is superior)
+- kmemcheck (note though that kmemcheck was removed in Linux 4.15)
+
+#### Debugging through slab poisoning
+
+- 특정 서명 바이트 또는 쉽게 인식할 수 있는 패턴으로 메모리가 할당되는 것을 확인
+  - `CONFIG_SLUB_DEBUG` 커널 옵션이 켜져 있어야함
+- SLAB_POISON 플래그를 사용하면 메모리가 할당될 때 특수한 값(0x5a5a5a5a)로 초기화
+  - 이 값을 발견하면 초기화되지 않은 메모리 버그 또는 UMR일 가능성이 높음
+
+- SLAB_POISON 플래그를 사용하지 않으면 0x6b6b6b6b6b로 초기화
+
+#### Trying it out - triggering a UAF bug
+
+- 497p
+
+#### SLUB debug options at boot and runtime
+
+- 500p
+
+### Understanding and using the kernel vmalloc() API
+
+- 커널의 주소 공간 내에 가상의 또 다른 주소 공간 - kernel vmalloc region
+  - 가상 페이지를 사용하면 매핑되는 물리적 페이지 프레임에 실제로 페이지 할당자를 통해 할당됨
+
+#### Learning to use the vmalloc family of APIs
+
+- 503p
