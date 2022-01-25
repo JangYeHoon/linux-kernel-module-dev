@@ -3,6 +3,7 @@
 - [Kernel Internals Essentials - Processes and Threads](#kernel-internals-essentials---processes-and-threads)
 - [Memory Management Internals - Essentials](#memory-management-internals---essentials)
 - [Kernel Memory Allocation for Module Authors - Part 1](#kernel-memory-allocation-for-module-authors---part-1)
+- [Kernel Memory Allocation for Module Authors - Part 2](#kernel-memory-allocation-for-module-authors---part-2)
 
 ## Kernel Internals Essentials - Processes and Threads
 
@@ -890,3 +891,12 @@ sizeof struct mysmallctx = 20 bytes
 
 - `CONFIG_SLOB`
   - 단순화시켰으며 대형 시스템에서는 잘 동작하지 않음
+
+
+
+## Kernel Memory Allocation for Module Authors - Part 2
+
+### Creating a custom slab cache
+
+- slab layer API를 통해 own custom slab caches 생성 가능
+- 
