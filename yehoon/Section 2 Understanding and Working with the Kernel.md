@@ -992,4 +992,33 @@ sizeof struct mysmallctx = 20 bytes
 
 #### Learning to use the vmalloc family of APIs
 
-- 503p
+- API를 이용해 커널의 vmalloc region에 가상 메모리를 할당
+  - `void *vmalloc(unsigned long size);`
+- vmalloc key point
+  - 연속 가상 메모리를 할당, 할당된 영역이 물리적으로 연속적이라는 보장은 없음
+  - 프로세스 컨텍스트에서만 호출
+  - 성공시 KVA, 실패시 null을 리턴
+  - 실제 할당된 메모리는 요청된 것보다 큼
+- slab API가 제공하는 메모리보다 큰 크기의 버퍼가 필요한 경우 vmalloc 사용
+
+- 커널은 메모리 영역을 할당하고 0으로 초기화하기 위해 `vzalloc()` API를 제공
+  - `void *vzalloc(unsigned long size);`
+  - `void vfree(const void *addr);`
+
+- vmalloc/vzmalloc 예제 코드
+  - `ch9/vmalloc_demo/vmalloc_demo.c`
+
+#### A brief note on memory allocations and demand paging
+
+- vmalloc 가상 메모리가 사용 시에 물리적 메모리에 할당되는 순서
+  - vmlloc()을 사용해 가상 메모리에 할당하면 처음에는 할당된 물리적 메모리는 없음
+  - 가상 페이지가 읽기, 쓰기 또는 실행과 같이 사용되면 물리 페이지 프레임에 할당
+- 내부적으로 실제 할당 방식
+  - 커널이나 프로세스가 가상 주소에 접근할 때마다 가상 주소는 CPU 코어의 MMU(메모리 관리 장치)에 의해 interpreted
+  - MMU의 TLB(Translation Lookaside Buffer)가 할당 확인
+  - MMU는 프로세스의 페이징 테이블을 탐색하여 가상 주소를 변환하여 물리적 주소를 얻음
+  - 이것을 address bus에 넣고 CPU에서 문제없이 진행
+- 물리적 주소와 직접 매핑된 주소 이외의 가상주소를 물리적 주소로 변환하면 안됨
+  - vmalloc에서 제공하지 않음
+- 509p
+
