@@ -1020,5 +1020,109 @@ sizeof struct mysmallctx = 20 bytes
   - 이것을 address bus에 넣고 CPU에서 문제없이 진행
 - 물리적 주소와 직접 매핑된 주소 이외의 가상주소를 물리적 주소로 변환하면 안됨
   - vmalloc에서 제공하지 않음
-- 509p
 
+#### Friends of vmalloc()
+
+- kmalloc()과 vmlloc()을 함께 사용하는 API
+
+  - `void *kvmalloc(size_t size, gfp_t flags);`
+  - `void kvfree(const void *addr);`
+  - 처음에 효율적인 kmalloc()으로 메모리 할당
+  - kmalloc()이 메모리 할당에 실패하면 느리지만 확실하게 메모리 할당을 할 수 있는 vmlloc()을 통해 메모리를 할당
+
+- {k|v}zalloc()과 유사한 kvzalloc() API도 제공
+
+  - 메모리를 할당하고 0으로 초기화
+
+- 배열을 통해 virtual contiguous memory를 할당할 수 있는 API
+
+  - ```c
+    // include/linux/mm.h
+    static inline void *kvmalloc_array(size_t n, size_t size, gfp_t flags)
+    {
+    	size_t bytes;
+    	if (unlikely(check_mul_overflow(n, size, &bytes)))
+    		return NULL;
+    	return kvmalloc(bytes, flags);
+    }
+    ```
+
+  - integer overflow 버그 체크 확인
+
+- 특정 NUMA 노드를 지정하여 메모리 할당하는 API
+
+  - `void *kvmalloc_node(size_t size, gfp_t flags, int node);`
+  - 0으로 초기화하는 `kzalloc_node()`
+
+- kv*() API들은 kvfee()로 메모리 해제
+
+#### Specifying the memory protections
+
+- 할당한 메모리 페이지에 대한 보호(읽기, 쓰기 및 실행 조합) 지정
+  - `void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);`
+  - 읽기 전용으로 할당
+    - `__vmalloc(42 * PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL_RO);`
+
+### The kmalloc() and vmalloc() APIS - a quick comparison
+
+- 517p
+
+### Visualizing the kernel memory allocation API set
+
+- 다이어그램은 Linux 커널 메모리 할당 계층과 그 안의 주요 API를 보여줌
+  - 모듈/드라이버 프로그래머에게 커널에 의해 노출된 (일반적으로 사용되는) API만 제공
+  - 메모리 해제 API는 표시하지 않음
+
+![image-20220128161657405](images/image-20220128161657405.png)
+
+### Selecting an appropriate API for kernel memory allocation
+
+- 상황에 맞게 API를 선택하는 방법 요약
+  - 필요한 메모리 양
+  - 필요한 메모리 유형
+- 할당된 메모리의 유형, 양 및 인접성에 따라 사용할 API 결정
+  - 521p - Figure 9.7
+- GFP flag 선정 방법
+  - 인터럽트 컨텍스트를 포함한 모든 atomic context는 GFP_ATOMIC 플래그만 사용
+  - 그게 아니면 GFP_ATOMIC과 GFP_KERNEL 중 선택하는데, sleep에 안전한 경우 GFP_KERNEL을 사용
+  - k[m|z]alloc() API 등을 사용할 때 ksize()로 실제 할당된 메모리 확인
+- 할당된 메모리 유형별로 사용할 API 결정
+  - 522p 표 확인
+
+### A word on DMA and CMA
+
+- DMA 작업을 수행하는 드라이버 프로그래머는 DMA용 API를 사용하고 slab 또는 page allocator API를 사용하지 않음
+- CMA(Contiguous Memory Allocator)
+  - 삼성 엔지니어들이 작성
+  - 물리적으로 인접한 큰 메모리 청크(4MB 제한을 초과하는 크기)를 할당할 수 있음
+  - CMA 코드는 DMA 엔진과 DMA API에 내장되어 있기 때문에 DMA 엔진 계층을 계속 사용
+
+### Stayin' alive - the OOM killer
+
+#### Reclaiming memory - a kernel housekeeping task and OOM
+
+- CPU 캐시 메모리 - RAM - Swap
+- kswapd 커널 스레드는 시스템의 메모리 사용량을 지속적으로 모니터링하고 메모리가 부족하면 페이지 회수 메커니즘을 호출
+  - page reclamation work는 node:zone 단위로 수행
+- 모든 메모리가 다 가득차면 어떻게 하는가
+  - 일반적으로 시스템이 죽지만 OOM killer를 통해 메모리를 많이 차지하는 프로세스를 종료
+
+### Deliberately invoking the OOM killer
+
+#### Invoking the OOM killer with a crazy allocator program
+
+- `ch9/oom_killer_try/oom_killer_try.c`
+
+### Understanding the rationale behind the OOM killer
+
+- 이전 예제에서OOM 킬러가 프로세스를 종료한 할당량
+  - 약 6.29GB
+  - RAM 2GB, swap space 2GB
+  - 총 4GB인데 왜 OOM 킬러는 6GB에서 호출했는가
+    - VM overcommit 정책으로 메모리를 초과 커밋
+- `cat /proc/sys/vm/overcommit_memory`
+  - 0 : 알고리즘을 사용하여 메모리 초과 커밋을 허용, 기본값
+  - 1 : 항상 오버 커밋
+  - 2 : 과도하게 커밋하지 않고 RAM의 구성 가능한 양을 더한 값을 초과할 수 없음
+
+532p
