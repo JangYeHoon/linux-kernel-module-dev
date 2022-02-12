@@ -1125,4 +1125,24 @@ sizeof struct mysmallctx = 20 bytes
   - 1 : 항상 오버 커밋
   - 2 : 과도하게 커밋하지 않고 RAM의 구성 가능한 양을 더한 값을 초과할 수 없음
 
-532p
+### Demand paging and OOM
+
+- `oom_killer_try` 에서 세번째 매개변수 force_page_fault를 1로 설정하여 페이지 폴트를 강제 실행
+- 다음  가지 중 하나가 발생
+  - 시스템에 RAM과 swap 모두 부족하여 page allocate에 실패하여 OOM killer를 호출
+  - 계산된 커널 VM commit limit을 초과
+
+### Understanding the OOM score
+
+- OOM 킬러가 호출될 때 memory-hogging process가 무엇인지 찾는 속도를 높이기 위해 OOM score를 할당하고 유지
+- OOM score의 범위는 0 ~ 1000
+  - 0이면 프로세스가 사용 가능한 메모리를 사용하고 있지 않음
+  - 1000이면 프로세스가 사용 가능한 메모리를 100% 사용하고 있음
+- OOM 점수가 가장 높은 프로세스를 먼저 OOM 킬러가 죽임
+
+- 특정 프로세스가 OOM 킬러에 의해 절대 종료되지 않게 하는 방법
+  - `/proc/<pid>/oom_score_adj`에서 값을 조정
+  - `net_oom_score = oom_score + oom_score_adj;`
+  - `oom_score_adj` 값을 1000으로 하면 죽임을 보장, -1000으로 하면 정반대
+- OOM score를 쿼리하는 빠른 방법 `choom`
+  - `ch9/query_process_oom.sh`
